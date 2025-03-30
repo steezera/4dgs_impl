@@ -4,6 +4,8 @@ class GaussianModel:
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
             # build scaling rotation -> scaling modifier var 를 이용해서 scaling
             actual_covariance = L.transpose(1, 2) @ L
+
+            # 
             symm = strip_symmetric(actual_covariance)
             return symm
         
@@ -15,7 +17,7 @@ class GaussianModel:
             cov_t = actual_covariance[:,3:4,3:4]
             current_covariance= cov_11 - cov_12 @ cov_12.transpose(1, 2) / cov_t
             symm = strip_symmetric(current_covariance)
-            if dt.shape[1] > :
+            if dt.shape[1] > 1:
                 mean_offset = (cov_12.squeeze(-1) / cov_t.squeeze(-1))[:, None, :] * dt[..., None]
                 mean_offset = mean_offset[..., None]  # [num_pts, num_time, 3, 1]
             else:
