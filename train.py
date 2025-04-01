@@ -8,6 +8,9 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+# 4D 랑 3D 나눈 다음에, 4D -> 3D projection 시키고 나머지 static 3D 랑 합친 뒤에 2D 로 projection 시켜서 해보기
+# 어디서 합칠지
+# p(t) marginal time == scale_t ???
 
 import os
 import random
