@@ -17,7 +17,7 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh, eval_shfs_4d
 from collections import defaultdict
 
-def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0, override_color=None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
     Render the scene. 
     
@@ -53,6 +53,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         gaussian_dim=pc.gaussian_dim,
         force_sh_3d=pc.force_sh_3d,
         prefiltered=False,
+        opa_threshold=pipe.opa_threshold,
         debug=pipe.debug
     )
 
@@ -78,6 +79,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             cov3D_precomp = pc.get_covariance(scaling_modifier)
         if pc.gaussian_dim == 4:
             marginal_t = pc.get_marginal_t(viewpoint_camera.timestamp)
+            # marginal_t = torch.clamp_max(marginal_t, 1.0) # NOTE: 这里乘完会大于1，绝对不行——marginal_t应该用个概率而非概率密度 暂时可以clamp一下，后期用积分 —— 2d 也用的clamp
             opacity = opacity * marginal_t
     else:
         scales = pc.get_scaling
@@ -145,37 +147,53 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             flow_2d = flow_2d[mask]
     
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    means3D_static = pc.static_xyz
+
+    means3D_static = pc.get_static_xyz
     screenspace_points_static = torch.zeros_like(means3D_static, dtype=means3D_static.dtype, requires_grad=True, device="cuda") + 0
     try:
         screenspace_points_static.retain_grad()
     except:
         pass
     means2D_static = screenspace_points_static
-    opacity_static = pc.static_opacity
+    opacity_static = pc.get_static_opacity
     sh_static = pc.get_static_features
-    scales_static = pc.static_scaling
-    rotations_static = pc.static_rotation 
+    scales_static = pc.get_static_scaling
+    rotations_static = pc.get_static_rotation 
 
     rendered_image, radii, depth, alpha, flow, covs_com, radii_static, color_4d, color_3d, invdepth = rasterizer(
-        means3D=means3D,
-        means2D=means2D,
-        shs=shs,
-        colors_precomp=colors_precomp,
-        flow_2d=flow_2d,
-        opacities=opacity,
-        ts=ts,
-        scales=scales,
-        scales_t=scales_t,
-        rotations=rotations,
-        rotations_r=rotations_r,
-        cov3D_precomp=cov3D_precomp,
-        means3D_static=means3D_static,
-        means2D_static=means2D_static,
-        shs_static=sh_static,
-        opacities_static=opacity_static,
-        scales_static=scales_static,
-        rotations_static=rotations_static)
+        means3D = means3D,
+        means2D = means2D,
+        shs = shs,
+        colors_precomp = colors_precomp,
+        flow_2d = flow_2d,
+        opacities = opacity,
+        ts = ts,
+        scales = scales,
+        scales_t = scales_t,
+        rotations = rotations,
+        rotations_r = rotations_r,
+        cov3D_precomp = cov3D_precomp,
+        means3D_static = means3D_static,
+        means2D_static = means2D_static,
+        shs_static = sh_static,
+        opacities_static = opacity_static,
+        scales_static = scales_static,
+        rotations_static = rotations_static)
+    
+
+        # rendered_image, radii, depth, alpha, flow, covs_com = rasterizer(
+        #     means3D = means3D,
+        #     means2D = means2D,
+        #     shs = shs,
+        #     colors_precomp = colors_precomp,
+        #     flow_2d = flow_2d,
+        #     opacities = opacity,
+        #     ts = ts,
+        #     scales = scales,
+        #     scales_t = scales_t,
+        #     rotations = rotations,
+        #     rotations_r = rotations_r,
+        #     cov3D_precomp = cov3D_precomp)
     
     if pipe.env_map_res:
         assert pc.env_map is not None
@@ -189,7 +207,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         tv = torch.acos(xyz_inter[...,2:3] / R) / torch.pi
         texcoord = torch.cat([tu, tv], dim=-1) * 2 - 1
         bg_color_from_envmap = F.grid_sample(pc.env_map[None], texcoord[None])[0] # 3,H,W
-        rendered_image = rendered_image + (1 - alpha) * bg_color_from_envmap
+        # mask2 = (0 < xyz_inter[...,0]) & (xyz_inter[...,1] > 0) # & (xyz_inter[...,2] > -19)
+        rendered_image = rendered_image + (1 - alpha) * bg_color_from_envmap # * mask2[None]
     
     if pipe.compute_cov3D_python and pc.gaussian_dim == 4:
         radii_all = radii.new_zeros(mask.shape)
@@ -201,7 +220,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
-            "visibility_filter": radii_all > 0,
+            "visibility_filter" : radii_all > 0,
             "radii": radii_all,
             "depth": depth,
             "alpha": alpha,
